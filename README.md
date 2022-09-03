@@ -1,5 +1,6 @@
 # Assembly_Temperature_Changer
 This is a program for changing temperature between Celsius, Fahrenheit and Kelvin build in IAR Embedded Workbench using Assembly for a MSP430FR6989 Microcontroller.
+This project was part of the course CIIC4082 - Computer Arquitecture 2 at the University of Puerto Rico Mayaguez.
 
 
 
