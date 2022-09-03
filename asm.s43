@@ -1,0 +1,1200 @@
+#include "msp430.h"                     ; #define controlled include file
+
+        NAME    main                    ; module name
+
+        PUBLIC  main                    ; make the main label vissible
+                                        ; outside this module
+        ORG     0FFFEh
+        DC16    init                    ; set reset vector to 'init' label
+
+        ORG     01C00h
+        
+digitH  db      0xFC, 0x60, 0xDB, 0xF3, 0x67, 0xB7, 0xBF, 0xE0, 0xFF, 0xE7
+digitL  db      0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ALIGN   1
+LCDMemMap dw      0xA29, 0xA25, 0xA23, 0xA32, 0xA2E, 0xA27, 0xA2A, 0xA26, 0xA24, 0xA33, 0xA2F, 0xA28
+nathan  db      0x6C, 0xEF, 0x80, 0x6F, 0xEF, 0x6C, 0x82, 0x00, 0x50, 0x00, 0x00, 0x82
+lexdye  db      0x1C, 0x9F, 0x00, 0xF0, 0x00, 0x9E, 0x00, 0x00, 0xAA, 0x50, 0xB0
+diva    db      0xF0, 0x90, 0x7C, 0xEF, 0x00, 0x00, 0x50, 0x50, 0x00, 0x00, 0x00
+misael  db      0x6C, 0x90, 0xB7, 0xEF, 0x9F, 0x1C, 0xA0, 0x50, 0x00, 0x00, 0x00      
+tmpchgH db      0x80, 0x6C, 0xCF, 0x9C, 0x6F, 0xBD, 0x50, 0xA0
+from    db      0x8F, 0xE1, 0xFC, 0x6C
+value1  dW      0x00, 0x00
+
+
+        RSEG    CSTACK                  ; pre-declaration of segment
+        RSEG    CODE                    ; place program in 'CODE' segment
+
+init:   MOV     #SFE(CSTACK), SP        ; set up stack
+
+main:   NOP                             ; main program
+        MOV.W   #WDTPW+WDTHOLD,&WDTCTL  ; Stop watchdog timer
+       
+
+
+
+ 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Setup ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+SetupLCD:
+        MOV.W   #0xffff,&LCDCPCTL0
+        MOV.W   #0xfc3f,&LCDCPCTL1
+        MOV.W   #0x0fff,&LCDCPCTL2
+        
+        MOV.W   #0x041e,&LCDCCTL0
+        
+        
+        MOV.W   #0x0208,&LCDCVCTL
+        
+        MOV.W   #0x8000,&LCDCCPCTL      ;Clock synchronization enabled
+
+        MOV.W   #2,&LCDCMEMCTL          ;Clear LCD memory
+
+        BIS.W   #1,&LCDCCTL0            ;Turn LCD on
+
+        
+SetupP1:
+        BIC.B   #0xFF,&P1SEL0
+        BIC.B   #0xFF,&P1SEL1
+        
+        MOV.B   #11111001B,&P1DIR
+        
+        MOV.B   #00000110B,&P1REN
+        
+        BIS.B   #00000110B,&P1OUT
+
+SetupRegisters:
+        MOV.W   #0xFF00,R7           ;For Delay count-down
+        MOV.B   #8,R6               ;For index use in DisplayH and DisplayL
+        MOV.B   #0,R8               ;Store the degree type conversion
+        MOV.B   #0,R5               ;R5 Register for LCDMemMap index
+        MOV.B   #0,R9               ;Temporal general use register
+        MOV.B   #0,R10              ;Store the values entered by the user
+
+        
+UnlockGPIO:
+        bic.w   #LOCKLPM5,&PM5CTL0
+        
+        
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;; Loops ;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+;Purpose: Control the user interface for the app.
+;Pre-conditions: The value for the delay should be set and R6 = 8.
+;Post-conditions: N/A 
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date: March 27, 2022
+MainLoop:
+        CALL    #Title
+        CALL    #NamesLoop
+ back:  CALL    #FromTempLoop
+        CALL    #NumbersLoop
+        CALL    #ResultDsply
+        CALL    #CheckS1AndS2
+        JMP     back
+        
+
+
+
+
+
+;Purpose: Control the Names display, if S1 pressed continue to next name, if S2 pressed continue to convertion menu.
+;Pre-conditions: The values to display the names have to be in arrays.
+;Post-conditions: A name is displayed on the LCD.
+;Arguments: N/A
+;Author: Misael Moctezuma, Nathaniel E Mendez
+;Date: March 27, 2022
+NamesLoop:
+ loop1:  CALL   #ButtonS1Pressed?
+         JNZ    loop1
+         
+         CALL   #FirstName                      ;Write NATHAN
+         CALL   #CheckS1AndS2
+         JNZ    fin                             ;IF S2 PRESSED BREAK LOOP
+         
+         CALL   #NextName                       ;Write LEXDYE
+         CALL   #CheckS1AndS2
+         JNZ    fin
+         
+         CALL   #NextName                       ;Write DIVA
+         CALL   #CheckS1AndS2
+         JNZ    fin
+         
+         CALL   #NextName                       ;Write MISAEL
+         CALL   #CheckS1AndS2
+         JZ     loop1                           ;IF S2 NOT PRESSED CONTINUE LOOP
+  fin:   RET
+
+
+;Purpose: Display the "from" conversion menu and permit the selection by the user.
+;Pre-conditions: N/A
+;Post-conditions: In R8 is stored the selction by the user.
+;Arguments: N/A
+;Author: Misael Moctezuma, Lexdyel J. Mendez Rios
+;Date: March 29, 2022
+FromTempLoop:
+
+         CALL   #FromDspl
+ loop3:  CALL   #F
+         CALL   #CheckS1AndS2
+         MOV.B  #0,R8                       ;Keep track if F was selected R8 = 0 = F
+         JNZ    fin2
+          
+         CALL   #Cel
+         CALL   #CheckS1AndS2
+         MOV.B  #1,R8                        ;Keep track if C was selected R8 = 1 = C
+         JNZ    fin2
+          
+         CALL   #K
+         CALL   #CheckS1AndS2
+         MOV.B  #2,R8
+          
+         JZ     loop3 
+ fin2:   CALL   #ToTempLoop
+         RET
+
+
+;Purpose: Display the "to" conversion menu and permit the selection by the user.
+;Pre-conditions: FromTempLoop subroutine have to be called before.
+;Post-conditions: In R12 is stored the input by the user.
+;Arguments: R8 that will have the previous selection and will be used to determine the "to" conversion posibles.
+;Author: Misael Moctezuma, Lexdyel J. Mendez Rios
+;Date: March 29, 2022
+ToTempLoop:
+
+         CALL   #ToDspl
+         CMP    #0,R8
+         JZ     C_K                            ;If F selected previously skip F
+
+   F_C:  CALL   #F
+         MOV.B  #0,R12
+         CALL   #CheckS1AndS2
+         JNZ    rtrn3                          ;If S2 pressed end loop
+         CMP    #1,R8
+         JZ     K_F                            ;If C selected previously skip C
+         
+   C_K:  CALL   #Cel
+         MOV.B  #1,R12
+         CALL   #CheckS1AndS2
+         JNZ    rtrn3
+         CMP    #2,R8
+         JZ     F_C                           ;If K selected previously skip K
+         
+   K_F:  CALL   #K
+         MOV.B  #2,R12
+         CALL   #CheckS1AndS2
+         JNZ    rtrn3
+         CMP    #0,R8
+         JZ     C_K
+         JNZ    F_C                           ;Keep looping
+         
+ rtrn3: 
+         RET
+         
+
+
+;Purpose: Display a negative sign or nothin if positive in the LCD and permit the user
+;         determine the sign of the input.
+;Pre-conditions: FromTempLoop and ToTempLoop have to be called before.
+;Post-conditions: The LCD will display a negative sign next to the numbers if selected.
+;Arguments: R8 = (C or F or K) to verify if the "From" conversion permit a negative sign.
+;Author: Misael Moctezuma
+;Date: April 12, 2022
+SignLoop:
+        CMP.B   #2,R8
+        JEQ     rtrnm
+        MOV.B   #0,R5
+        MOV.B   #3,&0xA29                       ;Display negative sign
+        CALL    #CheckS1AndS2
+        JNZ     rtrnm
+        MOV.B   #0,&0xA29                       ;Erase negative sign
+        CALL    #CheckS1AndS2
+        JZ      SignLoop
+ rtrnm: MOV.B   #2,R5
+        RET
+        
+        
+        
+;Purpose: Display numbers on the LCD for the user to input the value.
+;Pre-conditions: ToTempLoop and FromTempLoop have to be called before.
+;Post-conditions: R10 will have the input value.
+;Arguments: N/A
+;Author: Misael Moctezuma, Nathaniel E Mendez
+;Date: March 27, 2022
+NumbersLoop:
+         MOV.W  #2,&LCDCMEMCTL
+         MOV.B  #2,R5
+         CALL   #ZerosDsply
+         CALL   #SignLoop
+         MOV    #0x00,R10
+  start: PUSH.B R5
+  loop5: CALL   #Number
+         CALL   #ValueFCK
+         CALL   #CheckS1AndS2WBlink
+         JNZ    next
+         INC.B  R9
+         CALL   #ResetNum?
+         JZ     loop5
+         
+   next: POP.B  R5
+         CALL   #StoreNum
+         INCD.B R5
+         MOV.B  #0,R9
+         CMP    #10,R5
+         JNZ    start
+         CALL   #ReadInputSign
+         CALL   #ResultCalculator
+         RET
+
+
+;Purpose: Determine which convertion should take place given the user inputs and make the convertion.
+;Pre-conditions: The input value have to be in R10. R8 and R12 need to have the conversion values.
+;Post-conditions: R11 have the result.
+;Arguments: R10 = Value to be converted, R8 = Degree type(F,C or K) of R10 value, R12 = Degree type of the result.
+;Author: Misael Moctezuma, Lexdyel J. Mendez Rios
+;Date: April 10, 2022
+ResultCalculator:
+         PUSH.W R10
+         CMP    #0,R8
+         JNZ    CFK
+         CALL   #ConvFC
+         CMP    #2,R12
+         JZ     CK2
+         JMP    FIN
+         
+    CK:  MOV    R10,R11
+   CK2:  ADD    #0xAAB,R11            ;Convert C to K
+         JMP    FIN
+         
+   CFK:  CMP    #1,R8
+         JNZ    KCF
+         CMP    #0,R12
+         JNZ    CK
+         CALL   #ConvCF
+         JMP    FIN
+         
+   KCF:  MOV    R10,R11
+         SUB    #0xAAB,R11                ;Convert K to C
+         CMP    #0,R12
+         JZ     CF
+         JMP    FIN
+    CF:  MOV    R11,R10
+         CALL   #ConvCF
+    FIN: POP.W  R10
+         RET
+    
+         
+
+;Purpose: Verify the sign of the input value.
+;Pre-conditions: R10 need to have the input value without the sign if it was negative.
+;Post-conditions: R10 have the value with the sign entered by the user.
+;Arguments: R10 = input value and LCD memory address 0xA29 to verify if is displaying a negative sign.
+;Author: Misael Moctezuma, Lexdyel J. Mendez Rios
+;Date: April 12, 2022
+ReadInputSign:
+        CMP.B   #3,&0xA29
+        JNE     rtrnn
+        MOV.W   R10,R4
+        CALL    #SignInverter
+        MOV.W   R4,R10
+ rtrnn: RET
+         
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Buttons SubRoutines ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;S1 PRESSED -> Z = 1
+;S2 PRESSED -> Z = 0
+;Purpose: Determine when S1 or S2 are pressed.
+;Pre-conditions: 
+;Post-conditions: Zero flag is set if S1 is pressed or reset if S2 is pressed.
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date: March 28, 2022
+CheckS1AndS2:
+         CALL   #Delay
+ loop4:  CALL   #ButtonS2Pressed?
+         JEQ    rtrn2    
+         CALL   #ButtonS1Pressed?
+         JNZ    loop4
+         RET
+ rtrn2:  CLRZ
+         RET
+
+
+
+;Purpose: Determine when S1 or S2 are pressed while bliking the character in the LCD memory address determined by R5.
+;Pre-conditions: 
+;Post-conditions: Zero flag is set if S1 is pressed or reset if S2 is pressed.
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date: March 28, 2022
+CheckS1AndS2WBlink:
+         CALL   #Delay
+ loop7:  CALL   #Blink
+         CALL   #ButtonS2Pressed?
+         JEQ    rtrnr    
+         CALL   #ButtonS1Pressed?
+         JNZ    loop7
+         RET
+ rtrnr:  CLRZ
+         RET
+
+
+
+;Purpose: Check if S1 is been pressed.
+;Pre-conditions: N/A
+;Post-conditions: Zero flag is set if button is pressed, reset if not.
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date: March 28, 2022
+ButtonS1Pressed?:
+         PUSH.W R9
+         MOV.B  &P1IN,R9
+         AND.B  #00000110B,R9
+         CMP.B  #00000100B,R9
+         POP.W  R9
+         RET
+
+
+;Purpose: Check if S1 is been pressed.
+;Pre-conditions: N/A
+;Post-conditions: Zero flag is set if button is pressed, reset if not.
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date: March 28, 2022
+ButtonS2Pressed?:
+         PUSH.W R9
+         MOV.B  &P1IN,R9
+         AND.B  #00000110B,R9
+         CMP.B  #00000010B,R9
+         POP.W  R9
+         RET
+         
+   
+   
+   
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Title and Names SubRoutines ;;;;;;;;;;;;;;;;;;;;;
+
+;Purpose: Display the characters "TMPCHG" in the LCD.
+;Pre-conditions: The values containing 
+;Post-conditions: The "TMPCHG" are displayed on the LCD.
+;Arguments: Array containing the values to display the title.
+;Author: Misael Moctezuma, Nathaniel E Mendez
+;Date: March 27, 2022
+Title:  
+        MOV     #tmpchgH,R4
+        CALL    #Display
+        RET
+
+
+;Purpose: Display the first name that should appear in the LCD after the Title.
+;Pre-conditions: The values to display the name should be in the array given.
+;Post-conditions: A name is displayed on the screen.
+;Arguments: Array called nathan in this case or the array containing the name to be displayed.
+;Author: Misael Moctezuma, Nathaniel E Mendez
+;Date: March 27, 2022
+FirstName:
+        MOV.W   #2,&LCDCMEMCTL
+        MOV     #nathan,R4
+        CALL    #Display
+        RET
+        
+
+;Purpose: Display the name passed as argument.
+;Pre-conditions: FirstName should be called before or R4 should have the value
+;                for the display desired.
+;Post-conditions: A name is displayed on the LCD.
+;Arguments: R4 = starting address where the values to turn the desired segments in the LCD.
+;Author: Misael Moctezuma, Nathaniel E Mendez
+;Date: March 27, 2022
+NextName:
+        MOV.W   #2,&LCDCMEMCTL
+        MOV.B   #11,R6
+        CALL    #Display
+        RET
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Temperature SubRoutines ;;;;;;;;;;;;;;;;;;;;;
+
+
+;Purpose: Display word "FROM" in the LCD.
+;Pre-conditions: N/A
+;Post-conditions: "FROM" is displayed on the LCD.
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date April 7, 2022
+FromDspl:
+        MOV.W   #2,&LCDCMEMCTL
+        MOV     #from,R4
+        MOV.B   #4,R6
+        MOV.B   #0,R5
+        CALL    #Display
+        MOV.B   #0x50,&0xA26
+        MOV.B   #0xA0,&0xA33
+        RET
+        
+      
+        
+
+
+;Purpose: Display word "TO" in the LCD.
+;Pre-conditions: N/A
+;Post-conditions: The values to write "TO" are in 0xA29, 0xA2A and 0xA25.
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date: April 7, 2022
+ToDspl: 
+       MOV.W    #2,&LCDCMEMCTL
+       MOV.B    #0x80,&0xA29
+       MOV.B    #0x50,&0xA2A
+       MOV.B    #0xFC,&0xA25
+       RET
+       
+
+;Purpose: Display letter "F" in the LCD.
+;Pre-conditions: N/A
+;Post-conditions: Values to display "F" with the degree symbol are in 0xA28, 0xA2F and 0xA27.
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date: April 7, 2022
+F:
+        BIC.B   #0xFF,&0xA28
+        BIS.B   #0x04,&0xA2F
+        MOV.B   #0x8F,&0xA27
+        RET
+        
+
+;Purpose: Display letter "C" in the LCD.
+;Pre-conditions: N/A
+;Post-conditions: Values to display "C" with the degree symbol are in 0xA28, 0xA2F and 0xA27.
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date: April 7, 2022
+Cel:
+        BIC.B   #0xFF,&0xA28
+        BIS.B   #0x04,&0xA2F
+        MOV.B   #0x9C,&0xA27
+        RET
+ 
+;Purpose: Display letter "K" in the LCD.
+;Pre-conditions: N/A
+;Post-conditions: Values to display "K" are in 0xA27, 0xA2F and 0xA28.
+;Arguments: N/A
+;Author: Misael Moctezuma
+;Date: April 7, 2022
+K:
+        BIC.B   #0xFF,&0xA27
+        BIC.B   #0x04,&0xA2F
+        MOV.B   #0x72,&0xA28
+        RET
+    
+
+;Purpose: Display the degree symbol of the input value.
+;Pre-conditions: The input degree should be selected.
+;Post-conditions: The input conversion type symbol is displayed in the LCD.
+;Arguments: R8 = degree type(F = 0, C = 1, K = 2)
+;Author: Misael Moctezuma
+;Date: April 9, 2022
+ValueFCK:
+        CMP     #0,R8
+        JNZ     Csymb
+        CALL    #F
+        RET
+ Csymb: CMP     #1,R8
+        JNZ     Ksymb
+        CALL    #Cel
+        RET     
+ Ksymb: CALL    #K
+        RET
+        
+        
+        
+        
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Numbers SubRoutines ;;;;;;;;;;;;;;;;;;;;;
+
+
+
+;Purpose: Display the number stored in R9 in the LCD memory address in LCDMemMap array in the position given by R5 index.
+;Pre-conditions: R9 should have the digit to be displayed and R5 the index.
+;Post-conditions: Digit in R9 displayed in the LCD position determined by R5 index.
+;Arguments: R9 = digit to be displayed, R5 = index for the address stored in the LCDMemMap.
+;Author: Misael Moctezuma
+;Date: April 1, 2022
+Number: 
+        PUSH.B  R5                       
+        PUSH.B  R6
+        MOV     #digitH,R4
+        ADD     R9,R4
+        MOV.B   #1,R6
+        CALL    #Display
+        MOV     #digitL,R4
+        ADD     R9,R4
+        MOV.B   #1,R6
+        ADD     #12,R5
+        CALL    #Display
+        POP.B   R6
+        POP.B   R5
+        BIS.B   #1,&0xA33
+        RET
+
+
+
+;Purpose: Display 4 zeros on the LCD for when the input take place.
+;Pre-conditions: R5 have the index to where the first zero should be displayed in the LCD.
+;Post-conditions: Zeros displayed in LCD.
+;Arguments: R5 = index for the address stored in the LCDMemMap.
+;Author: Misael Moctezuma
+;Date: April 9, 2022
+ZerosDsply:
+      CALL      #Number
+      INCD.B    R5
+      CALL      #Number
+      INCD.B    R5
+      CALL      #Number
+      INCD.B    R5
+      CALL      #Number
+      MOV.B     #2,R5
+      RET
+      
+
+
+;Purpose: Erase the digit in R9 past 9 to return to 0.
+;Pre-conditions: R9 have a digit between 0 and 10.
+;Post-conditions: If R9 value = 10 then R9 = 0, else R9 stay the same.
+;Arguments: R9 = digit.
+;Author: Misael Moctezuma
+;Date: April 6, 2022
+ResetNum?:
+        CMP     #10,R9
+        JNZ     rtrn4
+        MOV.B   #0,R9
+ rtrn4: SETZ
+        RET
+
+
+
+;Purpose: Store the input value to be converted.
+;Pre-conditions: R9 have the a value input by the user and R5 have the position index of that value.
+;Post-conditions: R10 have input value.
+;Arguments: R9 = input digit and R5 = index position if input digit.
+;Author: Misael Moctezuma
+;Date: April 8, 2022
+StoreNum:
+        CALL    #SignInverter
+        MOV.B   R9,R4
+        CMP     #2,R5
+        JNZ     hndrs
+        MOV     #1000,R6
+        CALL    #Multiplication
+ hndrs: CMP     #4,R5
+        JNZ     tens
+        MOV     #100,R6
+        CALL    #Multiplication
+  tens: CMP     #6,R5
+        JNZ     unit
+        MOV     #10,R6
+        CALL    #Multiplication
+  unit: ADD     R4,R10
+        RET
+
+
+;Purpose: Rotate a number on decimal position to the right and round if needed.
+;Pre-conditions: R4 have the value.
+;Post-conditions: R4 have the value with one decimal space less and rounded if needed.
+;Arguments: R4 = value.
+;Author: Misael Moctezuma
+;Date: April 10, 2022
+NumRounder:
+        PUSH.B  R6
+        PUSH.W  R4
+        MOV.B   #10,R6
+        CALL    #Mod_Oprtn
+        CMP     #0xFFFC,R4
+        JGE     postv2
+        POP.W   R4
+        CALL    #NegativeRound
+        POP.B   R6
+        RET
+postv2: CMP     #5,R4
+        JN      rotate
+        POP.W   R4
+        CALL    #PositiveRound
+        POP.B   R6
+        RET
+rotate: POP.W   R4
+        CALL    #Division
+        POP.B   R6
+        RET
+   
+
+;Purpose: Round the number if it is positive.
+;Pre-conditions: R6 should have the divisor and R4 the value to be rounded.
+;Post-conditions: R4 have the value rounded.
+;Arguments: R4 = value, R6 = divisor.
+;Author: Misael Moctezuma
+;Date: April 10, 2022
+PositiveRound:
+        CALL    #Division
+        INC     R4
+        RET
+
+
+;Purpose: Round the number if it is negative.
+;Pre-conditions: R6 should have the divisor and R4 the value to be rounded.
+;Post-conditions: R4 have the value rounded.
+;Arguments: R4 = value, R6 = divisor.
+;Author: Misael Moctezuma
+;Date: April 10, 2022
+NegativeRound:
+        CALL    #Division
+        DEC     R4
+        RET
+
+
+
+;Purpose: Rotate a 2 word long number and round if needed.
+;Pre-conditions: R6 and R4 have the value of 2 word.
+;Post-conditions: R6 and R4 have the value ot 2 word with one decimal space less.
+;Arguments: R6 = MSW and R4 = LSW.
+;Author: Misael Moctezuma
+;Date: April 12, 2022
+TWNumRounder:
+        PUSH.W  R5
+        PUSH.W  R6
+        PUSH.W  R4
+        MOV.B   #10,R5
+        CALL    #TWMod
+        CMP     #0xFFFC,R4         
+        JGE     postv4                          ;Jump if R4 > -4
+        POP.W   R4
+        POP.W   R6
+        CALL    #TWNRound
+        POP.W   R5
+        RET
+postv4: CMP     #5,R4
+        JN      rotate1
+        POP.W   R4
+        POP.W   R6
+        CALL    #TWPRound
+        POP.W   R5
+        RET
+rotate1:POP.W   R4
+        POP.W   R6
+        CALL    #TwoWordsByteDivision
+        POP.W   R5
+        RET
+        
+
+
+;Purpose: Round a 2 word long positive number.
+;Pre-conditions: R4 and R6 have the value, and R5 the divisor.
+;Post-conditions: R6 and R4 have the value ot 2 word with one decimal space less.
+;Arguments: R6 = MSW and R4 = LSW, R5 = divisor.
+;Author: Misael Moctezuma
+;Date: April 12, 2022 
+TWPRound:
+        CALL    #TwoWordsByteDivision
+        INC     R4
+        ADC     R6
+        RET
+
+
+;Purpose: Round a 2 word long negative number.
+;Pre-conditions: R6 and R4 have the value ot 2 word with one decimal space less.
+;Post-conditions: R6 and R4 have the value ot 2 word with one decimal space less.
+;Arguments: R6 = MSW and R4 = LSW, R5 = divisor.
+;Author: Misael Moctezuma
+;Date: April 12, 2022
+TWNRound: 
+        CALL    #TwoWordsByteDivision
+        DEC     R4
+        SBC     R6
+        RET
+
+;;;;;;;;;;;;;;;;;;;;;MULTIPLICATION AND DIVISION SUBROUTINES;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+;Purpose: Divide a number.
+;Pre-conditions: R4 have the dividend and R6 the divisor.
+;Post-conditions: R4 have the quotient.
+;Arguments: R4 = dividend and R6 = divisor.
+;Author: Misael Moctezuma, Diva L. Mockford Polanco
+;Date: April 8, 2022
+Division:
+        PUSH.B  R9
+        PUSH.B  R6
+        PUSH.W  R4
+        MOV     #0H,R9
+        CALL    #Div_Helper
+        POP.W   R4
+        CMP     #0,R4
+        MOV     R9,R4
+        JGE     rtrn8
+        CALL    #SignInverter
+ rtrn8: POP.B   R6
+        POP.B   R9
+        RET
+        
+        
+;Purpose: Help the divison subroutine
+;Pre-conditions: R4 have the dividend, R6 the divisor and R9 = 0.
+;Post-conditions: R9 = quotient, R4 = residual.
+;Arguments: R4 = dividend, R6 = divisor and R9 = 0.
+;Author: Misael Moctezuma, Diva L. Mockford Polanco
+;Date: April 8, 2022   
+Div_Helper:
+        CMP     #0,R4
+        JGE     postv
+        CALL    #SignInverter                   ;If negative invert sign for the sub instrucction
+ postv: CMP     R6,R4
+        JN      rtrn6
+        SUB     R6,R4
+        INC     R9
+        JMP     postv
+ rtrn6: RET
+ 
+
+
+;Purpose: Divide a two word number by a byte long number.
+;Pre-conditions: R6 and R4 have the two word number dividend and R5 the divisor.
+;Post-conditions: R6 and R4 = quotient.
+;Arguments: R6 = MSW dividend part, R4 = LSW dividend part and R5 = divisor.
+;Author: Misael Moctezuma, Diva L. Mockford Polanco
+;Date: April 12, 2022
+TwoWordsByteDivision:
+        PUSH.B  R9
+        PUSH.W  R7
+        PUSH.W  R6
+        MOV     #0x0,R7
+        MOV     #0H,R9
+        CALL    #TWDHelper
+ rtrnc: MOV     R7,R4
+        MOV     R9,R6
+        POP.W   R7                      ;Old MSW = R6 value
+        CMP     #0,R7                   ;Check if it was negative
+        JGE     rtrnd
+        CALL    #TWSignInverter
+ rtrnd: POP.W   R7
+        POP.B   R9
+        RET
+        
+
+
+;Purpose: Help the two word divison subroutine.
+;Pre-conditions: R6, R4 have the dividend, R5 have the divisor and R9 = R7 = 0.
+;Post-conditions: R6, R4 have the residual, R9, R7 have the quotient.
+;Arguments: R6 and R6 = dividend, R9 and R7 = 0, and R5 = divisor.
+;Author: Misael Moctezuma, Diva L. Mockford Polanco
+;Date: April 12,2022
+TWDHelper:
+        CMP     #0H,R6
+        JGE     postv1
+        CALL    #TWSignInverter
+postv1: CMP     #0,R6                           
+        JNZ     cntn2                                   ;Jump if R6 is not zero
+        CMP     #0,R4
+        JN      cntn2                                    ;Jump if R4 is negative
+        CMP     R5,R4
+        JN      rtrnf                                   ;Jump if R4<R5
+cntn2:  SUB     R5,R4
+        SBC     R6
+        INC     R7
+        ADC     R9
+        JMP     postv1
+ rtrnf: RET
+        
+
+
+
+;Purpose: Find the residual of a two word division or MOD.(R6:R4 mod R5)
+;Pre-conditions: R6, R4 have the dividend and R5 the divisor.
+;Post-conditions: R4 have the residual, all other registers stay the same.
+;Arguments: R6 and R4 = dividend, R5 = divisor.
+;Author: Misael Moctezuma,Diva L. Mockford Polanco
+;Date: April 12, 2022
+TWMod:
+        PUSH.B  R9
+        PUSH.W  R7
+        PUSH.W  R6
+        MOV     #0x0,R7
+        MOV     #0H,R9
+        CALL    #TWDHelper
+        POP.W   R6                      ;Old MSW = R6 value
+        CMP     #0,R6                   ;Check if it was negative
+        JGE     rtrne
+        CALL    #SignInverter
+ rtrne: POP.W   R7
+        POP.B   R9
+        RET        
+        
+
+;Purpose: Invert the sign of a one word number.
+;Pre-conditions: R4 have the value to be inverted in sign.
+;Post-conditions: R4 have the new inverted value.
+;Arguments: R4 = value to be inverted.
+;Author: Misael Moctezuma, Diva L. Mockford Polanco
+;Date: April 8, 2022
+SignInverter:
+        INV     R4
+        INC     R4
+        RET
+
+
+
+
+;Purpose: Invert the sign of a two word number.
+;Pre-conditions: R4 and R6 have the two number value.
+;Post-conditions: R4 and R6 have the new inverted value.
+;Arguments: R6 = MSW and R4 = LSW
+;Author: Misael Moctezuma, Diva L. Mockford Polanco
+
+;Date: April 11, 2022
+TWSignInverter:
+        INV     R4
+        INV     R6
+        INC     R4
+        ADC     R6
+        RET
+
+
+
+
+;Purpose: Find the residual of a word division or MOD.(R4 mod R6)
+;Pre-conditions: R4 = Dividend, R6 =  Divisor.
+;Post-conditions: R4 = Residual, R6 stay the same.
+;Arguments: R4 = Dividend, R6 = Divisor.
+;Author: Misael Moctezuma,Diva L. Mockford Polanco
+;Date: April 9, 2022
+Mod_Oprtn:
+        PUSH.W  R9
+        PUSH.W  R4
+        MOV.B   #0,R9
+        CALL    #Div_Helper
+        POP.W   R9
+        CMP     #0,R9                           ;Check if old R4 value was negative
+        JGE     rtrn9
+        CALL    #SignInverter
+ rtrn9: POP.W   R9
+        RET
+
+
+
+;RESULT IS RETURNED IN R4  
+;Purpose: Multiply two words.
+;Pre-conditions: R4 and R6 operands.
+;Post-conditions: R4 = Result, R6 stay the same.
+;Arguments: R4 = Operand1 and R6 = Operand2 >= 0.
+;Author: Misael Moctezuma,Diva L. Mockford Polanco
+;Date: April 8, 2022
+Multiplication:
+        PUSH.B  R9
+        PUSH.W  R6
+        MOV     #0H,R9
+        CALL    #Mult_Helper
+        POP.W   R6
+        MOV     R9,R4
+        POP.B   R9
+        RET
+        
+
+
+;Purpose: Help Multiplication subroutine.
+;Pre-conditions: R4 and R6 operands, R9 = 0.
+;Post-conditions: R4 = Operand1, R6 = 0, R9 = Result.
+;Arguments: R4 and R5 = Operands, R9 = 0.
+;Author: Misael Moctezuma,Diva L. Mockford Polanco
+;Date: April 8, 2022
+Mult_Helper:
+        CMP     #0,R6
+        JZ      rtrn5
+        ADD     R4,R9
+        DEC     R6
+        JMP     Mult_Helper 
+ rtrn5: RET
+
+
+
+        
+        
+;Operands: R4 and R6
+;Two word result returned in R6 = MSW and R4 = LSW
+;R6 always has to be positive
+;Purpose: Multiply two words that have a result of two word long.
+;Pre-conditions: R4 and R6 operands.
+;Post-conditions:R4 and R6 are the result, R6 = MSW and R4 = LSW.
+;Arguments: R4 = Operand1 and R6 = Operand2 >= 0.
+;Author: Misael Moctezuma,Diva L. Mockford Polanco
+;Date: April 12, 2022
+TWMult:
+        PUSH.W  R5
+        PUSH.B  R9
+        PUSH.W  R4
+        CMP     #0,R4
+        JGE     postv5
+        CALL    #SignInverter
+postv5: MOV     #0H,R5
+        MOV     #0H,R9
+        CALL    #TWMHelper
+        MOV     R5,R6                   ;MSW
+        MOV     R9,R4                   ;LSW
+        POP.W   R9                      ;Old R4 value
+        CMP     #0,R9
+        JGE     rtrnh
+        CALL    #TWSignInverter
+ rtrnh: POP.B   R9
+        POP.W   R5
+        RET
+        
+        
+;Purpose: Help the TWMult subroutine.
+;Pre-conditions: R6 and R4 have the operands, R9 = R5 = 0.
+;Post-conditions: R9 and R5 have the result, R6 = 0 and R4 stay the same.
+;Arguments: R4 = Operand1, R6 = Operand2, R9 = R5 = 0.
+;Author: Misael Moctezuma,Diva L. Mockford Polanco
+;Date: April 12, 2022
+TWMHelper:
+        CMP     #0,R6
+        JZ      rtrng
+        ADD     R4,R9
+        ADC     R5
+        DEC     R6
+        JMP     TWMHelper 
+ rtrng: RET
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;TEMPERATURE CONVERTION SUBROUTINES;;;;;;;;;;;;;;;;;;;;
+
+
+
+;F = C * 1.8 + 32 => C*10 * 18 + 3200
+;Purpose: Convert Celcius to Fahrenheit.
+;Pre-conditions: R10 have the Celcius value.
+;Post-conditions: R11 have the Fahrenheit value and R10 stay the same.
+;Arguments: R10 = Celcius value.
+;Author: Misael Moctezuma,Diva L. Mockford Polanco
+;Date: April 10, 2022
+ConvCF:
+      PUSH.W    R5
+      PUSH.B    R6
+      MOV       R10,R4                  ;R10 = C*10
+      MOV       #18,R6
+      CALL      #TWMult                 ;C * 18
+      ADD       #0xC80,R4
+      ADC       R6
+      CALL      #TWNumRounder
+      MOV       R4,R11
+      POP.B     R6
+      POP.W     R5
+      RET
+
+
+
+
+;C = (F - 32) * .5556 => (F*10 - 320) * 5556
+;Purpose: Convert Fahrenheit to Celcius.
+;Pre-conditions: R10 have the Fahrenheit value.
+;Post-conditions: R11 have the Celcius value and R10 stays the same.
+;Arguments: R10 = Fahrenheit value.
+;Author: Misael Moctezuma,Diva L. Mockford Polanco
+;Date: April 10, 2022
+ConvFC: 
+      PUSH.B    R6
+      PUSH.B    R5
+      MOV       R10,R4
+      SUB       #140H,R4                        ;320
+      MOV       #0x15B4,R6                      ;5556
+      CALL      #TWMult
+      MOV       #0x3E8,R5                      ;Set divisor to 1,000
+      CALL      #TwoWordsByteDivision
+      CALL      #TWNumRounder
+      MOV       R4,R11
+      POP.B     R5
+      POP.B     R6
+      RET
+
+
+
+
+      
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; Display SubRoutines ;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;Purpose: Display a character in the LCD.
+;Pre-conditions: R5 have the index value to determine the position in which the
+;                character should be displayed, R4 has the value values to display
+;                the intended character, R6 has the value that determines the number
+;                of character to be displayed.
+;Post-conditions: The character is displayed in the LCD as intended.
+;Arguments: Index in R5, address to array with values in R4 to turn the desired segments, value in R6 
+;           to control the number of locations through we should iterate.
+;Author: Misael Moctezuma
+;Date: March 27, 2022
+Display:
+        PUSH.B  R5
+        PUSH.B  R9
+        CALL    #Dsply_Helper
+        MOV.B   #12,R6
+        POP.B   R9
+        POP.B   R5
+        RET
+
+
+;Purpose: Help the Display subroutine.
+;Pre-conditions: Display subroutine is called before and all the pre-conditions that
+;                apply to that subroutine should be met.
+;Post-conditions: The character is displayed in the LCD as intended.
+;Arguments: R4 have the address to where the first value in an array of the values to display a character,
+;           R5 number between 0 and 24 to iterate through the array with the addresses to the positions in
+;           the LCD, R6 have a number between 0 and 12 to determine how many character to be displayed.   
+;Author: Misael Moctezuma
+;Date: March 27, 2022
+Dsply_Helper:
+        MOV     LCDMemMap(R5),R9  
+        MOV.B   0(R4),0(R9)
+        INC.W   R4
+        ADD     #2,R5
+        DEC     R6
+        JNZ     Dsply_Helper
+        RET
+
+
+
+;Purpose: Turn off and on the LCD segments indicated. 
+;Pre-conditions: R5 have the index position that indicates the position on the LCD that is
+;                desired to blink.
+;Post-conditions: The character on the position should turn off then on and stay on.
+;Arguments: R5 have a number between 0 and 12 that is the index to obtain the address
+;           related to that position in the LCD.
+;Author: Misael Moctezuma
+;Date: April 12, 2022
+Blink:
+        MOV     #2EE0H,R7
+        CALL    #DelayP1P2
+        JZ      rtrnl
+        PUSH.B  R5
+        PUSH.B  R9
+        PUSH.W  R4
+        MOV     LCDMemMap(R5),R9                        ;Address of the LCD Memory to blink
+        PUSH.B  @R9                                     ;Value in the LCD Memory Address
+        MOV.B   #0,0(R9)                                   
+        ADD     #12,R5
+        MOV     LCDMemMap(R5),R9
+        MOV.B   @R9,R4
+        MOV.B   #0,0(R9)
+        MOV     #0x9E58,R7
+        CALL    #Delay
+        MOV.B   R4,0(R9)
+        SUB     #12,R5
+        MOV     LCDMemMap(R5),R9
+        POP.B   R4
+        MOV.B   R4,0(R9)
+        POP.W   R4
+        POP.B   R9
+        POP.B   R5
+ rtrnl: RET
+
+
+
+
+;Purpose: Display the result stored in R11 from the convertion
+;Pre-conditions: R11 have the result of the conversion and R12 the type degree of the conversion.
+;Post-conditions: The result is displayed on the LCD.
+;Arguments: R11 a value between 0 and 999.9, R12 a number between 0 and 2 meaning F, C and K respectively.
+;Author: Misael Moctezuma
+;Date: April 8, 2022
+ResultDsply:
+      PUSH.W    R11
+      MOV.W     #2,&LCDCMEMCTL
+      CMP       #0,R11
+      JGE       nsign
+      MOV.B     #3,&0xA29
+nsign:PUSH.B    R9
+      PUSH.B    R5
+      PUSH.B    R11
+      MOV.B     #10,R5
+      MOV       R11,R4
+      MOV.B     #10,R6
+      CALL      #RD_Helper
+      POP.B     R11
+      POP.B     R5
+      POP.B     R9
+      MOV.B     #8,R6
+      PUSH.B    R8
+      MOV.B     R12,R8
+      CALL      #ValueFCK
+      POP.B     R8
+      POP.W     R11
+      RET
+
+
+
+;Purpose: Help the result display sub routine.
+;Pre-conditions: The subroutine ResultDsply is used to call this subroutine, R11 
+;                have the result of the conversion and R12 the type degree of the conversion.
+;Post-conditions: The result is displayed on the LCD.
+;Arguments: R4 a value between 0 and 999.9, R5 = 10, R6 = 10.
+;Author: Misael Moctezuma
+;Date: April 8, 2022
+RD_Helper: 
+      CALL      #Mod_Oprtn
+      CMP       #0,R4
+      JGE       cntn
+      CALL      #SignInverter
+cntn: MOV.B     R4,R9
+      DECD.B    R5
+      CALL      #Number
+      MOV       R11,R4
+      CALL      #Division
+      CMP       #0,R4
+      JZ        rtrno
+      MOV       R4,R11
+      CMP       #2,R5
+      JNZ       RD_Helper
+rtrno: RET
+
+
+;Purpose: Create a delay and be check if a button is pressed during that delay.
+;Pre-conditions: R7 should have the number of cycles we want the delay to take
+;Post-conditions: If a button is pressed the zero flag is set.
+;Arguments: R7 have a number between 0000H and FFFFH.
+;Author: Misael Moctezuma
+;Date: April 12, 2022
+DelayP1P2:
+        DEC     R7
+        CALL    #ButtonS2Pressed?
+        JEQ     rtrnj
+        CALL    #ButtonS1Pressed?
+        JEQ     rtrnj
+        CMP     #0,R7
+        JNZ     DelayP1P2
+        CLRZ
+ rtrnj: MOV.W   #0xFF00,R7
+        RET
+
+
+
+;Purpose: Create a delay on the program.
+;Pre-conditions: R7 should have the number of cycles we want the delay to take.
+;Post-conditions: N/A
+;Arguments: R7 have a number between 0000H and FFFFH.
+;Author: Misael Moctezuma, Nathaniel E Mendez
+;Date: March 29, 2022
+Delay:   
+        DEC     R7
+        CMP     #0,R7
+        JNZ     Delay
+        MOV.W   #0xFF00,R7
+        RET
+
+FINAL:  JMP $                           ; jump to current location '$'
+                                        ; (endless loop)
+        NOP
+        END
